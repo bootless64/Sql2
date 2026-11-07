@@ -1,0 +1,159 @@
+-- ============================================================
+-- اسکریپت کامل ساخت پایگاه داده آنلاین شاپ با ۲۰۰۰ رکورد
+-- سازگار با MySQL / MariaDB
+-- ============================================================
+
+CREATE DATABASE IF NOT EXISTS online_shop
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci;
+USE online_shop;
+
+-- ------------------------------------------------------------
+-- ۱) ساخت جداول
+-- ------------------------------------------------------------
+DROP TABLE IF EXISTS order_items;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS products;
+DROP TABLE IF EXISTS customers;
+DROP TABLE IF EXISTS categories;
+
+CREATE TABLE categories (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE customers (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    full_name VARCHAR(100) NOT NULL,
+    email VARCHAR(150) UNIQUE NOT NULL,
+    phone VARCHAR(20),
+    city VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE products (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    category_id INT,
+    name VARCHAR(200) NOT NULL,
+    price DECIMAL(12,2) NOT NULL,
+    stock INT DEFAULT 0,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (category_id) REFERENCES categories(id)
+);
+
+CREATE TABLE orders (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    customer_id INT NOT NULL,
+    total_amount DECIMAL(12,2) DEFAULT 0,
+    status ENUM('pending','paid','shipped','delivered','cancelled') DEFAULT 'pending',
+    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (customer_id) REFERENCES customers(id)
+);
+
+CREATE TABLE order_items (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    order_id INT NOT NULL,
+    product_id INT NOT NULL,
+    quantity INT NOT NULL,
+    unit_price DECIMAL(12,2) NOT NULL,
+    FOREIGN KEY (order_id)   REFERENCES orders(id),
+    FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+-- ------------------------------------------------------------
+-- ۲) رویه ذخیره‌شده برای تولید ۲۰۰۰ رکورد
+--    (۲۰ دسته + ۱۵۰ مشتری + ۱۰۰۰ محصول + ۵۰۰ سفارش + ۳۳۰ آیتم)
+-- ------------------------------------------------------------
+DROP PROCEDURE IF EXISTS generate_shop_data;
+
+DELIMITER $$
+
+CREATE PROCEDURE generate_shop_data()
+BEGIN
+    DECLARE i INT DEFAULT 0;
+    DECLARE v_order_id INT;
+    DECLARE v_price DECIMAL(12,2);
+
+    -- ۲۰ دسته‌بندی
+    SET i = 0;
+    WHILE i < 20 DO
+        INSERT INTO categories (name, description) VALUES
+            (CONCAT('دسته‌بندی ', i + 1),
+             CONCAT('توضیحات دسته شماره ', i + 1));
+        SET i = i + 1;
+    END WHILE;
+
+    -- ۱۵۰ مشتری
+    SET i = 0;
+    WHILE i < 150 DO
+        INSERT INTO customers (full_name, email, phone, city) VALUES
+            (CONCAT('کاربر ', i + 1),
+             CONCAT('user', i + 1, '@example.com'),
+             CONCAT('0912', LPAD(i, 7, '0')),
+             ELT(1 + FLOOR(RAND() * 5),
+                 'تهران','مشهد','اصفهان','شیراز','تبریز'));
+        SET i = i + 1;
+    END WHILE;
+
+    -- ۱۰۰۰ محصول
+    SET i = 0;
+    WHILE i < 1000 DO
+        INSERT INTO products (category_id, name, price, stock, description) VALUES
+            (1 + FLOOR(RAND() * 20),
+             CONCAT('محصول ', i + 1),
+             ROUND(1000 + RAND() * 99000, 2),
+             FLOOR(RAND() * 500),
+             CONCAT('توضیحات محصول شماره ', i + 1));
+        SET i = i + 1;
+    END WHILE;
+
+    -- ۵۰۰ سفارش
+    SET i = 0;
+    WHILE i < 500 DO
+        INSERT INTO orders (customer_id, total_amount, status, order_date) VALUES
+            (1 + FLOOR(RAND() * 150),
+             0,
+             ELT(1 + FLOOR(RAND() * 5),
+                 'pending','paid','shipped','delivered','cancelled'),
+             DATE_SUB(NOW(), INTERVAL FLOOR(RAND() * 365) DAY));
+        SET i = i + 1;
+    END WHILE;
+
+    -- ۳۳۰ آیتم سفارش
+    SET i = 0;
+    WHILE i < 330 DO
+        SET v_order_id = 1 + FLOOR(RAND() * 500);
+        SET v_price    = ROUND(1000 + RAND() * 99000, 2);
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES
+            (v_order_id,
+             1 + FLOOR(RAND() * 1000),
+             1 + FLOOR(RAND() * 5),
+             v_price);
+        SET i = i + 1;
+    END WHILE;
+
+    -- به‌روزرسانی مبلغ کل هر سفارش بر اساس آیتم‌ها
+    UPDATE orders o
+    SET total_amount = COALESCE(
+        (SELECT SUM(quantity * unit_price)
+         FROM order_items
+         WHERE order_id = o.id), 0);
+END$$
+
+DELIMITER ;
+
+-- ------------------------------------------------------------
+-- ۳) اجرای رویه
+-- ------------------------------------------------------------
+CALL generate_shop_data();
+
+-- ------------------------------------------------------------
+-- ۴) بررسی تعداد رکوردهای هر جدول
+-- ------------------------------------------------------------
+SELECT 'categories'   AS tbl, COUNT(*) AS cnt FROM categories
+UNION ALL SELECT 'customers',   COUNT(*) FROM customers
+UNION ALL SELECT 'products',    COUNT(*) FROM products
+UNION ALL SELECT 'orders',      COUNT(*) FROM orders
+UNION ALL SELECT 'order_items', COUNT(*) FROM order_items;
